@@ -1,3 +1,5 @@
+qfpytoolbox @ git+ssh://git@github.com/theQuantFactory/QFRsuPipeline.git
 streamlit
 plotly
 duckdb
+pandas

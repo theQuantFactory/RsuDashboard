@@ -5,10 +5,16 @@ description = "Standalone RSU dashboard app consuming qfpytoolbox package"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+  "qfpytoolbox @ git+ssh://git@github.com/theQuantFactory/QFRsuPipeline.git",
   "streamlit",
   "plotly",
   "duckdb",
   "pandas",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest",
 ]
 
 [build-system]
