@@ -42,14 +42,29 @@ Expected logical sources:
 From this project root:
 
 ```bash
-# 1) Build parquet snapshots from raw inputs
-python pipeline.py --input-dir data/raw --output-dir snapshots/csv
+# 1) Build parquet snapshots from raw inputs (fast profile for dashboard)
+python pipeline.py --input-dir data/raw --output-dir snapshots/csv --snapshot-profile dashboard
 
 # 2) Pre-bake cache for fast dashboard startup
 python prebake_dashboard.py
 
 # 3) Start Streamlit dashboard
 streamlit run dashboard.py
+```
+
+Use `--snapshot-profile full` only when you explicitly need heavy intermediate outputs
+for deep offline analysis (`pivot_wide`, `reentry_detail`, `raw_scores`,
+`beneficiaire_enriched_events`, `monthly_beneficiaire_flows`). For production dashboard
+usage and very large datasets, keep `dashboard`.
+
+## Keep toolbox version in sync
+
+If `qfpytoolbox` changes in `../QFPyToolbox`, reinstall it in this environment before rerunning
+the pipeline to avoid mismatches (for example missing new parameters):
+
+```bash
+python -m pip uninstall -y qfpytoolbox
+python -m pip install -e ../QFPyToolbox
 ```
 
 ## Architecture
