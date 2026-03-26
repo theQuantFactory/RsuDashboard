@@ -1,0 +1,17 @@
+[project]
+name = "qfrsu-dashboard"
+version = "0.1.0"
+description = "Standalone RSU dashboard app consuming qfpytoolbox package"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "streamlit",
+  "plotly",
+  "duckdb",
+  "pandas",
+]
+
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
