@@ -1,11 +1,14 @@
 # QFRsuDashboard
 
-Standalone RSU dashboard app that depends on `qfpytoolbox` as a package.
+Standalone RSU dashboard app.
+
+This repository owns RSU domain logic (ingest, compute, KPI preparation, cache
+prebake, dashboard runtime). The `qfpytoolbox` dependency is kept generic and
+reusable (I/O, dataset, parameters, utilities).
 
 ## Prerequisites
 
 - Python 3.10+
-- Git + SSH access to the private toolbox repository (`git@github.com:theQuantFactory/QFRsuPipeline.git`)
 
 Recommended setup from this project root:
 
@@ -77,7 +80,12 @@ python -m pip uninstall -y qfpytoolbox
 python -m pip install -e ../QFPyToolbox
 ```
 
-For client installs from a clean machine, the default requirements already point to the private SSH repo.
+For clean server deployments, keep dependency installation explicit:
+
+```bash
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
 
 ## Security note (cache file)
 
@@ -101,7 +109,27 @@ pytest -q
 ## Architecture
 
 - App scripts orchestrate pipeline + prebake + UI.
-- Business compute is called from `qfpytoolbox` (package dependency), especially via:
-  - `qfpytoolbox.rsu`
-  - `qfpytoolbox.rsu_builder`
-  - `qfpytoolbox.rsu_loaders`
+- RSU business logic is local to this repo:
+  - `rsu.py`
+  - `rsu_builder.py`
+  - `rsu_loaders.py`
+  - `rsu_encoding.py`
+  - `analytics.py`
+- `qfpytoolbox` is used as a foundational package only (`io`, `dataset`,
+  `parameters`, `utils`).
+
+## Server migration checklist
+
+Use this checklist to migrate safely to a new machine/server:
+
+1. Clone `QFPyToolbox` and `QFRsuDashboard` at pinned commits/tags.
+2. Create a fresh virtual environment in `QFRsuDashboard`.
+3. Install toolbox first (editable for local development, wheel for production).
+4. Install dashboard dependencies: `pip install -r requirements.txt`.
+5. Run validation:
+   - `pytest -q` in `QFPyToolbox`
+   - `pytest -q` in `QFRsuDashboard`
+6. Run data pipeline and prebake:
+   - `python pipeline.py --input-dir data/raw --output-dir snapshots/csv --snapshot-profile dashboard`
+   - `python prebake_dashboard.py`
+7. Start app: `streamlit run dashboard.py`.

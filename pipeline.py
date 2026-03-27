@@ -4,7 +4,7 @@ import argparse
 import logging
 from pathlib import Path
 
-from qfpytoolbox import run_rsu_pipeline
+from rsu import run_rsu_pipeline
 
 
 def main() -> None:
