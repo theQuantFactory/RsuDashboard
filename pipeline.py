@@ -3,8 +3,10 @@ from __future__ import annotations
 import argparse
 import logging
 from pathlib import Path
+import sys
 
-from rsu import run_rsu_pipeline
+sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
+from qfrsu_dashboard.rsu import run_rsu_pipeline
 
 
 def main() -> None:
@@ -29,6 +31,17 @@ def main() -> None:
         default=0,
         help="Optional number of periods to process per batch (0 = all periods in one pass).",
     )
+    parser.add_argument(
+        "--chunk-size",
+        type=int,
+        default=200000,
+        help="CSV chunk size used while loading score events (lower uses less memory).",
+    )
+    parser.add_argument(
+        "--memory-safe",
+        action="store_true",
+        help="Write snapshots incrementally and avoid keeping all frames in memory.",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -39,10 +52,19 @@ def main() -> None:
         snapshot_profile=profile,
         timeseries_freq=("D" if args.timeseries_freq == "daily" else "W-MON"),
         timeseries_batch_size=max(0, int(args.timeseries_batch_size)),
+        chunk_size=max(10000, int(args.chunk_size)),
+        return_frames=not args.memory_safe,
     )
-    print(f"Built {len(frames)} frames")
-    for name, df in frames.items():
-        print(f"- {name}: {len(df)} rows x {len(df.columns)} cols")
+    if args.memory_safe:
+        out_dir = Path(args.output_dir)
+        parquet_files = sorted(out_dir.glob("*.parquet"))
+        print(f"Built {len(parquet_files)} parquet snapshots in memory-safe mode")
+        for p in parquet_files:
+            print(f"- {p.stem}: {p.name}")
+    else:
+        print(f"Built {len(frames)} frames")
+        for name, df in frames.items():
+            print(f"- {name}: {len(df)} rows x {len(df.columns)} cols")
 
 
 if __name__ == "__main__":

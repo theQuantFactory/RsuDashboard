@@ -59,10 +59,10 @@ Timeseries tuning (recommended on large datasets):
 
 ```bash
 # Weekly snapshots in small period batches
-python pipeline.py --input-dir data/raw --output-dir snapshots/csv --snapshot-profile dashboard --timeseries-freq weekly --timeseries-batch-size 8
+python pipeline.py --input-dir data/raw --output-dir snapshots/csv --snapshot-profile dashboard --timeseries-freq weekly --timeseries-batch-size 8 --chunk-size 100000 --memory-safe
 
 # Daily snapshots (more granular, usually heavier)
-python pipeline.py --input-dir data/raw --output-dir snapshots/csv --snapshot-profile dashboard --timeseries-freq daily --timeseries-batch-size 30
+python pipeline.py --input-dir data/raw --output-dir snapshots/csv --snapshot-profile dashboard --timeseries-freq daily --timeseries-batch-size 30 --chunk-size 100000 --memory-safe
 ```
 
 Use `--snapshot-profile full` only when you explicitly need heavy intermediate outputs
@@ -108,13 +108,16 @@ pytest -q
 
 ## Architecture
 
-- App scripts orchestrate pipeline + prebake + UI.
-- RSU business logic is local to this repo:
-  - `rsu.py`
-  - `rsu_builder.py`
-  - `rsu_loaders.py`
-  - `rsu_encoding.py`
-  - `analytics.py`
+- Runnable entry scripts stay at repo root:
+  - `pipeline.py`
+  - `prebake_dashboard.py`
+  - `dashboard.py`
+- Reusable application logic lives in `src/qfrsu_dashboard/`:
+  - `src/qfrsu_dashboard/rsu.py`
+  - `src/qfrsu_dashboard/rsu_builder.py`
+  - `src/qfrsu_dashboard/rsu_loaders.py`
+  - `src/qfrsu_dashboard/rsu_encoding.py`
+  - `src/qfrsu_dashboard/analytics.py`
 - `qfpytoolbox` is used as a foundational package only (`io`, `dataset`,
   `parameters`, `utils`).
 
@@ -130,6 +133,6 @@ Use this checklist to migrate safely to a new machine/server:
    - `pytest -q` in `QFPyToolbox`
    - `pytest -q` in `QFRsuDashboard`
 6. Run data pipeline and prebake:
-   - `python pipeline.py --input-dir data/raw --output-dir snapshots/csv --snapshot-profile dashboard`
+   - `python pipeline.py --input-dir data/raw --output-dir snapshots/csv --snapshot-profile dashboard --chunk-size 100000`
    - `python prebake_dashboard.py`
 7. Start app: `streamlit run dashboard.py`.

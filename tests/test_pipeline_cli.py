@@ -19,6 +19,8 @@ def test_pipeline_forwards_snapshot_profile(monkeypatch, capsys, tmp_path):
         snapshot_profile,
         timeseries_freq,
         timeseries_batch_size,
+        chunk_size,
+        return_frames,
         sources=None,
     ):
         captured["input_dir"] = input_dir
@@ -26,6 +28,8 @@ def test_pipeline_forwards_snapshot_profile(monkeypatch, capsys, tmp_path):
         captured["snapshot_profile"] = snapshot_profile
         captured["timeseries_freq"] = timeseries_freq
         captured["timeseries_batch_size"] = timeseries_batch_size
+        captured["chunk_size"] = chunk_size
+        captured["return_frames"] = return_frames
         captured["sources"] = sources
         return {"master_events": pd.DataFrame({"x": [1]})}
 
@@ -52,6 +56,8 @@ def test_pipeline_forwards_snapshot_profile(monkeypatch, capsys, tmp_path):
     assert captured["snapshot_profile"] == "dashboard"
     assert captured["timeseries_freq"] == "W-MON"
     assert captured["timeseries_batch_size"] == 0
+    assert captured["chunk_size"] == 200000
+    assert captured["return_frames"] is True
 
 
 def test_pipeline_forwards_daily_timeseries_flags(monkeypatch, capsys, tmp_path):
@@ -64,6 +70,8 @@ def test_pipeline_forwards_daily_timeseries_flags(monkeypatch, capsys, tmp_path)
         snapshot_profile,
         timeseries_freq,
         timeseries_batch_size,
+        chunk_size,
+        return_frames,
         sources=None,
     ):
         captured["input_dir"] = input_dir
@@ -71,6 +79,8 @@ def test_pipeline_forwards_daily_timeseries_flags(monkeypatch, capsys, tmp_path)
         captured["snapshot_profile"] = snapshot_profile
         captured["timeseries_freq"] = timeseries_freq
         captured["timeseries_batch_size"] = timeseries_batch_size
+        captured["chunk_size"] = chunk_size
+        captured["return_frames"] = return_frames
         captured["sources"] = sources
         return {"master_events": pd.DataFrame({"x": [1]})}
 
@@ -101,3 +111,48 @@ def test_pipeline_forwards_daily_timeseries_flags(monkeypatch, capsys, tmp_path)
     assert captured["snapshot_profile"] == "dashboard"
     assert captured["timeseries_freq"] == "D"
     assert captured["timeseries_batch_size"] == 30
+    assert captured["chunk_size"] == 200000
+    assert captured["return_frames"] is True
+
+
+def test_pipeline_memory_safe_mode_prints_files(monkeypatch, capsys, tmp_path):
+    out_dir = tmp_path / "out"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "master_events.parquet").write_bytes(b"PAR1")
+    (out_dir / "delta_frame.parquet").write_bytes(b"PAR1")
+
+    captured: dict[str, object] = {}
+
+    def _fake_run_rsu_pipeline(
+        *,
+        input_dir,
+        output_dir,
+        snapshot_profile,
+        timeseries_freq,
+        timeseries_batch_size,
+        chunk_size,
+        return_frames,
+        sources=None,
+    ):
+        captured["return_frames"] = return_frames
+        return {}
+
+    monkeypatch.setattr(pipeline, "run_rsu_pipeline", _fake_run_rsu_pipeline)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "pipeline.py",
+            "--input-dir",
+            str(tmp_path / "in"),
+            "--output-dir",
+            str(out_dir),
+            "--memory-safe",
+        ],
+    )
+
+    pipeline.main()
+    out = capsys.readouterr().out
+    assert "memory-safe mode" in out
+    assert "master_events" in out
+    assert "delta_frame" in out
+    assert captured["return_frames"] is False

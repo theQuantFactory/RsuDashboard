@@ -7,8 +7,8 @@ from typing import Any
 
 import pandas as pd
 
-from analytics import save_frames_as_parquet
-from rsu_builder import (
+from qfrsu_dashboard.analytics import save_frames_as_parquet
+from qfrsu_dashboard.rsu_builder import (
     build_beneficiaire_enriched_events,
     build_churn_timeline,
     build_delta_frame,
@@ -25,7 +25,7 @@ from rsu_builder import (
     build_score_timeseries,
     build_volatility_summary,
 )
-from rsu_loaders import (
+from qfrsu_dashboard.rsu_loaders import (
     load_all_programmes,
     load_beneficiaire,
     load_menage,
@@ -220,8 +220,18 @@ def run_csv_etl(
     snapshot_profile: str = "full",
     timeseries_freq: str = "W-MON",
     timeseries_batch_size: int = 0,
+    return_frames: bool = True,
 ) -> dict[str, pd.DataFrame]:
     del verbose
+    out_dir = snapshot_dir or "snapshots/csv"
+
+    frames: dict[str, pd.DataFrame] = {}
+
+    def _emit(name: str, df: pd.DataFrame) -> None:
+        if save_snapshots:
+            save_frames_as_parquet({name: df}, out_dir, overwrite=True, skip_empty=False)
+        if return_frames:
+            frames[name] = df
     df_menage = load_menage(menage_path)
     if str(scores_path).lower().endswith(".parquet"):
         df_scores = pd.read_parquet(scores_path)
@@ -229,27 +239,40 @@ def run_csv_etl(
         df_scores = load_scores(scores_path, chunk_size=chunk_size, max_score=max_score)
     df_programmes = load_all_programmes(programme_paths)
     df_beneficiaire = pd.DataFrame() if not beneficiaire_path else load_beneficiaire(beneficiaire_path)
+    _emit("raw_menage", df_menage)
+    _emit("raw_programmes", df_programmes)
+    _emit("raw_beneficiaire", df_beneficiaire)
 
     df_master = build_master_events(df_menage, df_scores, df_programmes)
+    _emit("master_events", df_master)
     df_delta = build_delta_frame(df_master)
+    _emit("delta_frame", df_delta)
     df_timeline = build_menage_timeline(df_master)
+    _emit("menage_timeline", df_timeline)
     df_pivot = build_pivot_wide(df_master) if snapshot_profile == "full" else pd.DataFrame()
     df_trajectory = build_menage_trajectory(df_master)
+    _emit("menage_trajectory", df_trajectory)
     df_ts = build_score_timeseries(
         df_master,
         include_demo_breakdowns=(snapshot_profile == "full"),
-        include_percentiles=(snapshot_profile == "full"),
+        # Keep percentiles in dashboard profile for Tendances Temporelles decile charts.
+        include_percentiles=True,
         timeseries_freq=timeseries_freq,
         batch_size=timeseries_batch_size,
     )["daily_stats"]
+    _emit("score_timeseries", df_ts)
     df_near = build_near_threshold_timeseries(
         df_master,
         timeseries_freq=timeseries_freq,
         batch_size=timeseries_batch_size,
     )
+    _emit("near_threshold_timeseries", df_near)
     df_monthly = build_monthly_eligibility_flows(df_master)
+    _emit("monthly_eligibility_flows", df_monthly)
     df_churn = build_churn_timeline(df_master)
+    _emit("churn_timeline", df_churn)
     df_reentry_detail, df_reentry_summary = build_reentry_analysis(df_master)
+    _emit("reentry_summary", df_reentry_summary)
     df_ben_enriched = (
         build_beneficiaire_enriched_events(df_master, df_beneficiaire)
         if (not df_beneficiaire.empty and snapshot_profile == "full")
@@ -268,40 +291,28 @@ def run_csv_etl(
         df_master,
         max_score=max_score,
     )
+    _emit("qc_summary", df_qc)
 
     programme_frames = (
         {f"programme_{p}": build_programme_frame(df_master, p) for p in df_programmes["programme"].unique()}
         if not df_programmes.empty
         else {}
     )
-    frames: dict[str, pd.DataFrame] = {
-        "master_events": df_master,
-        "delta_frame": df_delta,
-        "menage_timeline": df_timeline,
-        "raw_menage": df_menage,
-        "raw_programmes": df_programmes,
-        "raw_beneficiaire": df_beneficiaire,
-        "menage_trajectory": df_trajectory,
-        "score_timeseries": df_ts,
-        "near_threshold_timeseries": df_near,
-        "monthly_eligibility_flows": df_monthly,
-        "churn_timeline": df_churn,
-        "reentry_summary": df_reentry_summary,
-        "qc_summary": df_qc,
-        **programme_frames,
-    }
-    if snapshot_profile == "full":
-        frames["pivot_wide"] = df_pivot
-    if snapshot_profile == "full":
-        frames["raw_scores"] = df_scores
-        frames["reentry_detail"] = df_reentry_detail
-    if df_ben_enriched is not None:
-        frames["beneficiaire_enriched_events"] = df_ben_enriched
-    if df_ben_monthly is not None:
-        frames["monthly_beneficiaire_flows"] = df_ben_monthly
+    for pname, pdf in programme_frames.items():
+        _emit(pname, pdf)
 
-    if save_snapshots:
-        save_frames_as_parquet(frames, snapshot_dir or "snapshots/csv", overwrite=True, skip_empty=False)
+    if snapshot_profile == "full":
+        _emit("pivot_wide", df_pivot)
+    if snapshot_profile == "full":
+        _emit("raw_scores", df_scores)
+        _emit("reentry_detail", df_reentry_detail)
+    if df_ben_enriched is not None:
+        _emit("beneficiaire_enriched_events", df_ben_enriched)
+    if df_ben_monthly is not None:
+        _emit("monthly_beneficiaire_flows", df_ben_monthly)
+
+    if not return_frames:
+        return {}
     return frames
 
 
@@ -313,6 +324,8 @@ def run_rsu_pipeline(
     snapshot_profile: str = "full",
     timeseries_freq: str = "W-MON",
     timeseries_batch_size: int = 0,
+    chunk_size: int = 200000,
+    return_frames: bool = True,
 ) -> dict[str, pd.DataFrame]:
     """Run RSU computations from discovered raw files and save snapshots."""
     src = sources if sources is not None else discover_rsu_sources(input_dir)
@@ -341,5 +354,7 @@ def run_rsu_pipeline(
         snapshot_profile=snapshot_profile,
         timeseries_freq=timeseries_freq,
         timeseries_batch_size=timeseries_batch_size,
+        chunk_size=chunk_size,
+        return_frames=return_frames,
     )
     return frames

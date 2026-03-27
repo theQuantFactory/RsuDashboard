@@ -266,9 +266,9 @@ def build_score_timeseries(
         return {"daily_stats": pd.DataFrame(), "daily_menages": pd.DataFrame()}
     batch_n = int(batch_size) if int(batch_size) > 0 else len(period_points)
 
-    # Fast path for dashboard profile (overall weekly series only).
-    # Keeps the same running-state behavior while avoiding Python dict/list churn.
-    if not include_demo_breakdowns and not include_percentiles:
+    # Fast path for dashboard profile (overall series only).
+    # Keeps running-state behavior while avoiding Python dict/list churn.
+    if not include_demo_breakdowns:
         hh_codes, _ = pd.factorize(ev["menage_ano"], sort=False)
         if len(hh_codes) == 0:
             return {"daily_stats": pd.DataFrame(), "daily_menages": pd.DataFrame()}
@@ -297,6 +297,16 @@ def build_score_timeseries(
                 if active.size == 0:
                     continue
 
+                p10: float | None = None
+                p25: float | None = None
+                p75: float | None = None
+                p90: float | None = None
+                if include_percentiles:
+                    p10 = round(float(np.percentile(active, 10)), 6)
+                    p25 = round(float(np.percentile(active, 25)), 6)
+                    p75 = round(float(np.percentile(active, 75)), 6)
+                    p90 = round(float(np.percentile(active, 90)), 6)
+
                 rows_fast.append(
                     {
                         "date_calcul": week_end,
@@ -309,10 +319,10 @@ def build_score_timeseries(
                         "score_std": round(float(np.std(active)), 6),
                         "score_min": round(float(np.min(active)), 6),
                         "score_max": round(float(np.max(active)), 6),
-                        "score_p10": None,
-                        "score_p25": None,
-                        "score_p75": None,
-                        "score_p90": None,
+                        "score_p10": p10,
+                        "score_p25": p25,
+                        "score_p75": p75,
+                        "score_p90": p90,
                     }
                 )
 
@@ -613,23 +623,71 @@ def build_reentry_analysis(df_master: pd.DataFrame) -> tuple[pd.DataFrame, pd.Da
     detail = grouped.agg(
         n_reentries=("reentry_event", "sum"),
         all_eligible=("eligible_bool", "all"),
+        ever_eligible=("eligible_bool", "any"),
     ).reset_index()
     detail["ever_lost"] = ~detail["all_eligible"]
     detail = detail.drop(columns=["all_eligible"])
     detail["n_reentries"] = detail["n_reentries"].astype(int)
     if detail.empty:
         return detail, pd.DataFrame()
-    summary = (
-        detail.groupby(["programme", "n_reentries"], observed=True)["menage_ano"]
-        .nunique()
-        .rename("n_menages")
-        .reset_index()
+
+    rows_summary: list[dict[str, Any]] = []
+    for prog, grp in detail.groupby("programme", observed=True):
+        total = grp["menage_ano"].nunique()
+        n_always = grp[(grp["n_reentries"] == 0) & (~grp["ever_lost"])]["menage_ano"].nunique()
+        n_never = grp[(grp["n_reentries"] == 0) & (~grp["ever_eligible"])]["menage_ano"].nunique()
+        n_lost_no_return = grp[
+            (grp["n_reentries"] == 0) & (grp["ever_lost"]) & (grp["ever_eligible"])
+        ]["menage_ano"].nunique()
+
+        rows_summary.append(
+            {
+                "programme": prog,
+                "n_reentries": "toujours éligible",
+                "n_menages": int(n_always),
+                "pct_menages": round(n_always / total * 100, 2) if total else 0.0,
+            }
+        )
+        rows_summary.append(
+            {
+                "programme": prog,
+                "n_reentries": "jamais éligible",
+                "n_menages": int(n_never),
+                "pct_menages": round(n_never / total * 100, 2) if total else 0.0,
+            }
+        )
+        rows_summary.append(
+            {
+                "programme": prog,
+                "n_reentries": "perdu sans retour",
+                "n_menages": int(n_lost_no_return),
+                "pct_menages": round(n_lost_no_return / total * 100, 2) if total else 0.0,
+            }
+        )
+
+        for n_r, sub in grp[grp["n_reentries"] > 0].groupby("n_reentries", observed=True):
+            n_m = sub["menage_ano"].nunique()
+            rows_summary.append(
+                {
+                    "programme": prog,
+                    "n_reentries": str(int(n_r)),
+                    "n_menages": int(n_m),
+                    "pct_menages": round(n_m / total * 100, 2) if total else 0.0,
+                }
+            )
+
+    summary = pd.DataFrame(rows_summary)
+    order_map = {
+        "toujours éligible": -3,
+        "jamais éligible": -2,
+        "perdu sans retour": -1,
+    }
+    summary["_order"] = summary["n_reentries"].map(order_map).fillna(
+        summary["n_reentries"].astype(str).map(lambda x: int(x) if x.isdigit() else 999)
     )
-    total = detail.groupby("programme", observed=True)["menage_ano"].nunique().rename("total")
-    summary = summary.merge(total, on="programme", how="left")
-    summary["pct_menages"] = (summary["n_menages"] / summary["total"] * 100).round(2)
+    summary = summary.sort_values(["programme", "_order"]).drop(columns=["_order"]).reset_index(drop=True)
     summary["n_reentries"] = summary["n_reentries"].astype(str)
-    return detail, summary.drop(columns=["total"])
+    return detail, summary
 
 
 def build_near_threshold_timeseries(

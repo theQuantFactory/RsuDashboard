@@ -8,7 +8,7 @@ from typing import Union
 
 import pandas as pd
 
-from rsu_encoding import detect_encoding, repair_dataframe
+from qfrsu_dashboard.rsu_encoding import detect_encoding, repair_dataframe
 
 log = logging.getLogger(__name__)
 
@@ -63,12 +63,13 @@ def _read_csv_safe(
     dtypes: dict[str, str] | None = None,
     parse_dates: list[str] | None = None,
     chunk_size: int | None = None,
+    usecols: list[str] | None = None,
 ) -> pd.DataFrame:
     p = Path(path)
     if not p.exists():
         raise FileNotFoundError(f"CSV not found: {p}")
     enc = detect_encoding(p)
-    kwargs = dict(encoding=enc, encoding_errors="replace", on_bad_lines="warn", engine="python")
+    kwargs = dict(encoding=enc, encoding_errors="replace", on_bad_lines="warn", engine="python", usecols=usecols)
     try:
         if chunk_size:
             chunks = [c for c in pd.read_csv(p, chunksize=chunk_size, **kwargs)]
@@ -145,17 +146,98 @@ def load_menage(path: PathLike, chunk_size: int | None = None) -> pd.DataFrame:
     return df
 
 
-def load_scores(path: PathLike, chunk_size: int = 200000, max_score: float = 15.0) -> pd.DataFrame:
-    df = _read_csv_safe(path, dtypes=SCORE_DTYPES, parse_dates=["date_calcul"], chunk_size=chunk_size)
+def _postprocess_scores(df: pd.DataFrame, max_score: float) -> pd.DataFrame:
     if "type_demande" in df.columns:
         df["type_demande"] = df["type_demande"].astype("string").str.strip()
     if {"score_corrige", "score_calcule"}.issubset(df.columns):
         df["score_final"] = df["score_corrige"].fillna(df["score_calcule"])
         df["was_corrected"] = df["score_corrige"].notna() & (df["score_corrige"] != df["score_calcule"])
-    df = df.drop_duplicates()
+    if "date_calcul" in df.columns:
+        df["date_calcul"] = pd.to_datetime(df["date_calcul"], errors="coerce")
     if "score_final" in df.columns and max_score is not None:
         df = df[df["score_final"] <= max_score].copy()
     return df
+
+
+def load_scores(path: PathLike, chunk_size: int = 200000, max_score: float = 15.0) -> pd.DataFrame:
+    """Load score events with chunked dedup for large CSV files.
+
+    For large files, a global ``drop_duplicates`` on the full frame is too costly.
+    We deduplicate incrementally by ``score_id_ano`` when available.
+    """
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(f"CSV not found: {p}")
+
+    if chunk_size <= 0:
+        df = _read_csv_safe(
+            p,
+            dtypes=SCORE_DTYPES,
+            parse_dates=["date_calcul"],
+            chunk_size=None,
+            usecols=list(SCORE_DTYPES.keys()),
+        )
+        df = _postprocess_scores(df, max_score=max_score)
+        if "score_id_ano" in df.columns:
+            df = df.drop_duplicates(subset=["score_id_ano"], keep="first")
+        return df
+
+    enc = detect_encoding(p)
+    kwargs = dict(
+        encoding=enc,
+        encoding_errors="replace",
+        on_bad_lines="warn",
+        engine="python",
+        chunksize=chunk_size,
+        usecols=list(SCORE_DTYPES.keys()),
+    )
+    try:
+        reader = pd.read_csv(p, **kwargs)
+    except Exception:
+        kwargs["encoding"] = "latin-1"
+        reader = pd.read_csv(p, **kwargs)
+
+    chunks: list[pd.DataFrame] = []
+    seen_ids: set[int] = set()
+    rows_in = 0
+    rows_kept = 0
+
+    for idx, chunk in enumerate(reader, start=1):
+        chunk = repair_dataframe(chunk, verbose=False)
+        rows_in += len(chunk)
+
+        for col, dtype in SCORE_DTYPES.items():
+            if col not in chunk.columns:
+                continue
+            if dtype == "Int64":
+                chunk[col] = pd.to_numeric(chunk[col], errors="coerce").astype("Int64")
+            elif dtype == "float64":
+                chunk[col] = pd.to_numeric(chunk[col], errors="coerce")
+            else:
+                chunk[col] = chunk[col].astype(dtype)
+
+        chunk = _postprocess_scores(chunk, max_score=max_score)
+
+        if "score_id_ano" in chunk.columns:
+            keys = pd.to_numeric(chunk["score_id_ano"], errors="coerce")
+            is_new = ~keys.isin(seen_ids)
+            chunk = chunk[is_new].copy()
+            seen_ids.update(int(v) for v in keys[is_new].dropna().astype("int64"))
+        else:
+            subset = [c for c in ["menage_ano", "date_calcul", "type_demande", "score_corrige", "score_calcule"] if c in chunk]
+            if subset:
+                chunk = chunk.drop_duplicates(subset=subset, keep="first")
+
+        rows_kept += len(chunk)
+        chunks.append(chunk)
+        if idx % 10 == 0:
+            log.info("Scores loading progress: chunks=%d rows_in=%d rows_kept=%d", idx, rows_in, rows_kept)
+
+    if not chunks:
+        return pd.DataFrame(columns=list(SCORE_DTYPES.keys()) + ["score_final", "was_corrected"])
+    out = pd.concat(chunks, ignore_index=True)
+    log.info("Scores loaded: rows_in=%d rows_kept=%d", rows_in, len(out))
+    return out
 
 
 def load_scores_multi(

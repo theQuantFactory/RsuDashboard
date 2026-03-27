@@ -2061,17 +2061,19 @@ elif page == " Churn":
         st.caption(
             "Un ménage 're-entre' quand il perd l'éligibilité puis la regagne. "
             "**Toujours éligible** = n'a jamais perdu · "
+            "**Jamais éligible** = n'a jamais été éligible · "
             "**Perdu sans retour** = a perdu l'éligibilité et ne l'a plus recouvrée · "
             "**1, 2, 3+** = nombre d'oscillations autour du seuil.")
 
         def _reentry_color(lbl):
             if lbl == "toujours éligible": return "#15803d"
+            if lbl == "jamais éligible":   return "#1f2937"
             if lbl == "perdu sans retour": return "#6b7280"
             if lbl == "1":                 return "#f59e0b"
             return "#ef4444"
 
         def _reentry_order(lbl):
-            order = {"toujours éligible": 0, "perdu sans retour": 1}
+            order = {"toujours éligible": 0, "jamais éligible": 1, "perdu sans retour": 2}
             try:    return order.get(lbl, 2 + int(lbl))
             except: return 99
 
@@ -2095,6 +2097,9 @@ elif page == " Churn":
                 "<span style='display:inline-flex;align-items:center;gap:5px'>"
                 "<span style='width:10px;height:10px;background:#15803d;border-radius:2px;display:inline-block'></span>"
                 "<strong>Toujours éligible</strong></span>"
+                "<span style='display:inline-flex;align-items:center;gap:5px'>"
+                "<span style='width:10px;height:10px;background:#1f2937;border-radius:2px;display:inline-block'></span>"
+                "<strong>Jamais éligible</strong></span>"
                 "<span style='display:inline-flex;align-items:center;gap:5px'>"
                 "<span style='width:10px;height:10px;background:#6b7280;border-radius:2px;display:inline-block'></span>"
                 "<strong>Perdu sans retour</strong></span>"

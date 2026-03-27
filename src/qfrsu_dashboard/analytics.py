@@ -10,7 +10,9 @@ This module provides a small, source-agnostic workflow:
 from __future__ import annotations
 
 import datetime as dt
+import logging
 import pickle
+import time
 from pathlib import Path
 from typing import Any, Callable
 
@@ -21,6 +23,7 @@ from qfpytoolbox.io.dataframes import read_dataframe
 FrameMap = dict[str, pd.DataFrame]
 CalcFn = Callable[[FrameMap], pd.DataFrame]
 AggFn = Callable[[FrameMap], Any]
+log = logging.getLogger(__name__)
 
 __all__ = [
     "load_frames",
@@ -64,7 +67,16 @@ def save_frames_as_parquet(
         path = out_dir / f"{name}.parquet"
         if path.exists() and not overwrite:
             raise FileExistsError(f"File already exists: {path}")
-        df.to_parquet(path, index=False)
+        tmp_path = path.with_suffix(path.suffix + ".tmp")
+        if tmp_path.exists():
+            tmp_path.unlink()
+        n_rows, n_cols = len(df), len(df.columns)
+        t0 = time.perf_counter()
+        log.info("Writing parquet frame '%s' (%d rows x %d cols) -> %s", name, n_rows, n_cols, path)
+        df.to_parquet(tmp_path, index=False)
+        tmp_path.replace(path)
+        elapsed = time.perf_counter() - t0
+        log.info("Finished frame '%s' in %.2fs", name, elapsed)
         out[name] = path
     return out
 
